@@ -94,7 +94,7 @@ def _elim_level(horse: dict) -> int:
 
 def calc_score(horse: dict, race: dict) -> dict:
     """HARUTOスコア計算。horse / race の dict を受け取りスコアを返す。"""
-    omega    = int(horse.get("omega_idx", 50))
+    omega    = int(horse.get("omega_idx", 0))
     compi    = int(horse.get("compi_idx", 0))
     odds     = float(horse.get("odds", 10.0))
     kinryo   = float(horse.get("kinryo", 57.0))
@@ -111,11 +111,15 @@ def calc_score(horse: dict, race: dict) -> dict:
         "turf_bias" if course_type == "芝" else "dirt_bias", {}
     ).get("tendency", "")
 
-    # スコア計算
-    ability_score = _omega_ability(omega) * 0.7 + _odds_score(odds) * 0.3
+    # スコア計算: Ω指数未取得(=0)のときはオッズ100%で代替
+    if omega > 0:
+        ability_score = _omega_ability(omega) * 0.7 + _odds_score(odds) * 0.3
+        tjra = _tjra(omega)
+    else:
+        ability_score = _odds_score(odds)
+        tjra = 0.0
     jockey_score  = _jockey_base(keigen)
     kinryo_corr   = _kinryo_corr(sex, kinryo, distance, grade)
-    tjra          = _tjra(omega)
     w_fac         = _w_factor(course_type, condition, bias_data)
     kyaku_fac     = _kyakushitsu_factor(kyaku, bias_tend)
     compi_bonus   = _compi_bonus(compi)
@@ -281,7 +285,7 @@ def get_race_detail(race_url: str) -> dict | None:
                 race["distance"] = int(m_dist.group(1))
             if "ダ" in info_text or "ダート" in info_text:
                 race["course_type"] = "ダ"
-            for g in ["GI","GII","GIII"]:
+            for g in ["GIII","GII","GI"]:
                 if g in info_text:
                     race["grade"] = g
                     break
@@ -345,8 +349,8 @@ def get_race_detail(race_url: str) -> dict | None:
                     odds = v
                     break
 
-            # Ω指数
-            omega = 50
+            # Ω指数（出馬表ページのみ存在。結果ページは0=未取得）
+            omega = 0
             for t in texts:
                 m = re.search(r"Ω[:\s]*(\d+)", t)
                 if m:
@@ -514,7 +518,7 @@ def get_nar_race_detail(race_url: str) -> dict | None:
                 if c in txt:
                     race["condition"] = c
                     break
-            for g in ["JpnI", "JpnII", "JpnIII"]:
+            for g in ["JpnIII", "JpnII", "JpnI"]:
                 if g in txt:
                     race["grade"] = g
                     break
