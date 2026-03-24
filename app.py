@@ -376,16 +376,291 @@ def get_race_detail(race_url: str) -> dict | None:
 
 
 # ──────────────────────────────────────────────
+# NAR（地方競馬）スクレイパー  keiba.go.jp
+# ──────────────────────────────────────────────
+
+NAR_BASE = "https://www.keiba.go.jp"
+
+NAR_VENUE_MAP = {
+    "10": "帯広", "11": "水沢", "12": "盛岡",
+    "20": "大井", "21": "川崎", "22": "金沢",
+    "23": "笠松", "24": "名古屋", "25": "姫路",
+    "27": "園田", "30": "高松", "31": "高知",
+    "32": "佐賀", "35": "宮崎",
+}
+
+NAR_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "ja-JP,ja;q=0.9",
+    "Referer": "https://www.keiba.go.jp/",
+}
+
+
+def _nar_get(url: str) -> BeautifulSoup | None:
+    try:
+        r = requests.get(url, headers=NAR_HEADERS, timeout=15)
+        r.raise_for_status()
+        r.encoding = r.apparent_encoding or "utf-8"
+        return BeautifulSoup(r.text, "html.parser")
+    except Exception as e:
+        print(f"[NAR scraper] 失敗: {url} → {e}")
+        return None
+
+
+def get_nar_race_list(target_date: date | None = None) -> dict:
+    """地方競馬レース一覧取得（keiba.go.jp）"""
+    if target_date is None:
+        target_date = date.today()
+    ds_display = target_date.strftime("%Y%m%d")
+    ds_encoded = target_date.strftime("%Y%%2f%m%%2f%d")   # URL用: 2026%2f03%2f25
+    ds_slash   = target_date.strftime("%Y/%m/%d")          # 比較用: 2026/03/25
+
+    # TodayRaceInfoTop から当日の会場リンクを収集
+    top_url = f"{NAR_BASE}/KeibaWeb/TodayRaceInfo/TodayRaceInfoTop"
+    soup = _nar_get(top_url)
+    venue_codes: list[str] = []
+
+    if soup:
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            m = re.search(
+                r"RaceList\?k_raceDate=(\d{4}%2[Ff]\d{2}%2[Ff]\d{2})&k_babaCode=(\d+)",
+                href
+            )
+            if not m:
+                continue
+            date_raw = m.group(1).replace("%2f", "/").replace("%2F", "/")
+            code = m.group(2)
+            if date_raw == ds_slash and code not in venue_codes:
+                venue_codes.append(code)
+
+    venues: list[dict] = []
+    for code in venue_codes:
+        list_url = (
+            f"{NAR_BASE}/KeibaWeb/TodayRaceInfo/RaceList"
+            f"?k_raceDate={ds_encoded}&k_babaCode={code}"
+        )
+        list_soup = _nar_get(list_url)
+        if not list_soup:
+            continue
+
+        races: list[dict] = []
+        for a in list_soup.find_all("a", href=True):
+            href = a["href"]
+            m2 = re.search(r"DebaTable\?.*?k_raceNo=(\d+).*?k_babaCode=(\d+)", href)
+            if not m2:
+                m2 = re.search(r"DebaTable\?.*?k_babaCode=(\d+).*?k_raceNo=(\d+)", href)
+                if not m2:
+                    continue
+                rno, bc = int(m2.group(2)), m2.group(1)
+            else:
+                rno, bc = int(m2.group(1)), m2.group(2)
+
+            # フルURL生成
+            # href例: "../TodayRaceInfo/DebaTable?..." → /KeibaWeb/TodayRaceInfo/DebaTable?...
+            if href.startswith("../"):
+                full = f"{NAR_BASE}/KeibaWeb/{href[3:]}"
+            elif href.startswith("/"):
+                full = NAR_BASE + href
+            else:
+                full = f"{NAR_BASE}/KeibaWeb/TodayRaceInfo/{href}"
+
+            if rno not in [r["race_no"] for r in races]:
+                races.append({"race_no": rno, "url": full})
+
+        if races:
+            races.sort(key=lambda r: r["race_no"])
+            venues.append({
+                "code":  code,
+                "name":  NAR_VENUE_MAP.get(code, f"会場{code}"),
+                "races": races,
+            })
+
+    print(f"[NAR] {ds_display}: {len(venues)}会場")
+    return {"date": ds_display, "venues": venues}
+
+
+def get_nar_race_detail(race_url: str) -> dict | None:
+    """地方競馬出馬表取得・パース"""
+    soup = _nar_get(race_url)
+    if not soup:
+        return None
+
+    race = {
+        "url":         race_url,
+        "horses":      [],
+        "distance":    1600,
+        "course_type": "ダ",
+        "condition":   "良",
+        "grade":       "",
+        "is_nar":      True,
+    }
+
+    # レース情報（タイトル・距離・馬場）
+    for sel in ["h2", "h3", ".raceTitle", ".race_name"]:
+        el = soup.select_one(sel)
+        if el:
+            txt = el.get_text(" ", strip=True)
+            m_d = re.search(r"(\d{3,4})m", txt)
+            if m_d:
+                race["distance"] = int(m_d.group(1))
+            if "芝" in txt:
+                race["course_type"] = "芝"
+            for c in ["良", "稍重", "重", "不良"]:
+                if c in txt:
+                    race["condition"] = c
+                    break
+            for g in ["JpnI", "JpnII", "JpnIII"]:
+                if g in txt:
+                    race["grade"] = g
+                    break
+            break
+
+    # 出馬表テーブル（Table 0）
+    main_tbl = soup.find("table")
+    if not main_tbl:
+        return None
+
+    rows = main_tbl.find_all("tr")
+    i = 0
+    while i < len(rows):
+        cells = rows[i].find_all(["td", "th"])
+        # 馬データ行 = セル数 ≥ 10 かつ先頭2セルが枠番・馬番
+        if len(cells) >= 10:
+            texts = [c.get_text(" ", strip=True) for c in cells]
+            # 枠番(0)・馬番(1)が1桁数字か確認
+            wakuban = _si(texts[0])
+            umano   = _si(texts[1])
+            if 1 <= wakuban <= 8 and 1 <= umano <= 20:
+                # 馬名
+                name = texts[2].strip()
+                # 騎手（テキスト中の最初の名前部分）
+                jockey_raw = texts[3] if len(texts) > 3 else ""
+                jockey = re.split(r"\s|　|\n", jockey_raw.strip())[0]
+                # オッズ・人気: "3.0 (3人気)" or "3.0\n(3人気)"
+                odds_raw = texts[4] if len(texts) > 4 else ""
+                odds, ninki = 10.0, 0
+                m_op = re.search(r"([\d.]+)\s*[(\s（]*(\d+)人気", odds_raw)
+                if m_op:
+                    odds  = _sf(m_op.group(1))
+                    ninki = int(m_op.group(2))
+                else:
+                    m_odds = re.search(r"([\d.]+)", odds_raw)
+                    if m_odds:
+                        odds = _sf(m_odds.group(1))
+
+                # 性齢・斤量：後続行から探す
+                sex, kinryo = "牡", 57.0
+                for j in range(i + 1, min(i + 12, len(rows))):
+                    nc = rows[j].find_all(["td", "th"])
+                    if not nc:
+                        continue
+                    nt = [c.get_text(" ", strip=True) for c in nc]
+                    if re.match(r"^[牡牝セ去]\d", nt[0]):
+                        sex = nt[0][0]
+                        # 斤量は "56.0 2-3-0-0" 形式
+                        for t in nt:
+                            km = re.match(r"^([\d]{2}\.[\d])", t.strip())
+                            if km:
+                                v = float(km.group(1))
+                                if 49.0 <= v <= 65.0:
+                                    kinryo = v
+                                    break
+                        break
+
+                if name and len(name) >= 2:
+                    race["horses"].append({
+                        "uma_no":      umano,
+                        "name":        name,
+                        "sex":         sex,
+                        "kinryo":      kinryo,
+                        "jockey":      jockey,
+                        "keigen":      "",
+                        "odds":        odds,
+                        "ninki":       ninki,
+                        "kyakushitsu": "",
+                        "omega_idx":   0,   # NAR はΩ指数なし
+                        "compi_idx":   0,
+                        "sire_name":   "",
+                        "alpha":       "",
+                    })
+        i += 1
+
+    return race if race["horses"] else None
+
+
+# ──────────────────────────────────────────────
+# NAR スコア計算（Ω指数なし版）
+# ──────────────────────────────────────────────
+
+def calc_nar_score(horse: dict, race: dict) -> dict:
+    """NAR用HARUTOスコア（Ω指数なし・オッズ主体）"""
+    compi   = int(horse.get("compi_idx", 0))
+    odds    = float(horse.get("odds", 10.0))
+    kinryo  = float(horse.get("kinryo", 57.0))
+    sex     = horse.get("sex", "牡")
+    keigen  = horse.get("keigen", "")
+
+    distance    = int(race.get("distance", 1600))
+    grade       = race.get("grade", "")
+    course_type = race.get("course_type", "ダ")
+    condition   = race.get("condition", "良")
+
+    # NAR は人気（オッズ）をそのまま能力スコアとして使用
+    ability_score = _odds_score(odds)
+    jockey_score  = _jockey_base(keigen)
+    kinryo_corr   = _kinryo_corr(sex, kinryo, distance, grade)
+    compi_bonus   = _compi_bonus(compi)
+    # ダート補正（NAR は基本ダート）
+    dirt_bonus = 0.5 if course_type == "ダ" and condition in ("重", "不良") else 0.0
+
+    total = (
+        ability_score * 0.8 +
+        jockey_score  * 0.2 +
+        kinryo_corr   +
+        compi_bonus   +
+        dirt_bonus
+    )
+
+    elim = _elim_level(horse)
+    if elim >= 2:
+        total -= 5.0
+
+    return {
+        "total_score": round(total, 2),
+        "ability":     round(ability_score, 2),
+        "jockey":      round(jockey_score, 2),
+        "kinryo_corr": round(kinryo_corr, 3),
+        "compi_bonus": round(compi_bonus, 2),
+        "elim_level":  elim,
+    }
+
+
+# ──────────────────────────────────────────────
 # Flask ルーティング
 # ──────────────────────────────────────────────
 
 @app.route("/")
-def index():
-    return render_template("index.html")
+def top_page():
+    return render_template("top.html")
+
+@app.route("/jra")
+def jra_page():
+    return render_template("jra.html")
+
+@app.route("/nar")
+def nar_page():
+    return render_template("nar.html")
+
+# ── JRA API ──
 
 @app.route("/api/races")
 def api_races():
-    """当日または指定日のレース一覧"""
+    """JRA レース一覧"""
     ds = request.args.get("date")
     try:
         td = datetime.strptime(ds, "%Y%m%d").date() if ds else date.today()
@@ -393,56 +668,114 @@ def api_races():
         td = date.today()
     data = get_race_list(td)
     if not data.get("venues"):
-        data["message"] = "本日の開催情報が取得できませんでした。JRAは土日祝のみ開催です。"
+        data["message"] = "この日のJRAレースが見つかりません（JRAは土日祝のみ開催）"
     return jsonify(data)
 
 
-@app.route("/api/debug")
-def api_debug():
-    """スクレイパーデバッグ（生HTMLの一部を返す）"""
-    ds = request.args.get("date", date.today().strftime("%Y%m%d"))
-    url = f"{BASE}/db/race/?kaisai_date={ds}"
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        links = re.findall(r'href="(/db/race/\d{12}/?)"', r.text)
-        unique = list(dict.fromkeys(links))[:30]
-        return jsonify({
-            "url": url,
-            "status": r.status_code,
-            "race_links_found": unique,
-            "count": len(unique),
-        })
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
 @app.route("/api/predict")
 def api_predict():
-    """予想実行 → スコアテーブル返却"""
-    url = request.args.get("url","").strip()
+    """JRA 予想実行"""
+    url = request.args.get("url", "").strip()
     if not url:
         return jsonify({"error": "url パラメータが必要です"}), 400
-
     race = get_race_detail(url)
     if not race:
-        return jsonify({"error": "データ取得失敗"}), 500
+        return jsonify({"error": "データ取得失敗（keibalab.jp）"}), 500
 
-    # スコア計算
     horses_scored = []
     for h in race["horses"]:
         sc = calc_score(h, race)
         h.update(sc)
         horses_scored.append(h)
 
-    ranked = assign_marks(horses_scored)
+    return jsonify({
+        "race":   {k: v for k, v in race.items() if k != "horses"},
+        "horses": assign_marks(horses_scored),
+    })
+
+
+@app.route("/api/debug")
+def api_debug():
+    """JRA スクレイパーデバッグ"""
+    ds = request.args.get("date", date.today().strftime("%Y%m%d"))
+    url = f"{BASE}/db/race/?kaisai_date={ds}"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        links = re.findall(r'href="(/db/race/\d{12}/?)"', r.text)
+        unique = list(dict.fromkeys(links))[:30]
+        return jsonify({"url": url, "status": r.status_code,
+                        "race_links_found": unique, "count": len(unique)})
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
+
+# ── NAR API ──
+
+@app.route("/api/nar/races")
+def api_nar_races():
+    """NAR レース一覧（keiba.go.jp）"""
+    ds = request.args.get("date")
+    try:
+        td = datetime.strptime(ds, "%Y%m%d").date() if ds else date.today()
+    except ValueError:
+        td = date.today()
+    data = get_nar_race_list(td)
+    if not data.get("venues"):
+        data["message"] = "この日の地方競馬レースが見つかりません（本日以外は取得できない場合があります）"
+    return jsonify(data)
+
+
+@app.route("/api/nar/predict")
+def api_nar_predict():
+    """NAR 予想実行"""
+    url = request.args.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "url パラメータが必要です"}), 400
+    race = get_nar_race_detail(url)
+    if not race:
+        return jsonify({"error": "データ取得失敗（keiba.go.jp）"}), 500
+
+    horses_scored = []
+    for h in race["horses"]:
+        sc = calc_nar_score(h, race)
+        h.update(sc)
+        horses_scored.append(h)
 
     return jsonify({
         "race":   {k: v for k, v in race.items() if k != "horses"},
-        "horses": ranked,
+        "horses": assign_marks(horses_scored),
     })
+
+
+@app.route("/api/nar/debug")
+def api_nar_debug():
+    """NAR スクレイパーデバッグ"""
+    ds = request.args.get("date", date.today().strftime("%Y%m%d"))
+    td = datetime.strptime(ds, "%Y%m%d").date()
+    ds_slash = td.strftime("%Y/%m/%d")
+    top_url = f"{NAR_BASE}/KeibaWeb/TodayRaceInfo/TodayRaceInfoTop"
+    try:
+        r = requests.get(top_url, headers=NAR_HEADERS, timeout=15)
+        links = re.findall(
+            r"RaceList\?k_raceDate=(\d{4}%2[Ff]\d{2}%2[Ff]\d{2})&k_babaCode=(\d+)",
+            r.text
+        )
+        filtered = [(d.replace("%2f","/").replace("%2F","/"), c)
+                    for d, c in links if d.replace("%2f","/").replace("%2F","/") == ds_slash]
+        return jsonify({
+            "top_url": top_url,
+            "status": r.status_code,
+            "target_date": ds_slash,
+            "venues_found": list(dict.fromkeys([c for _, c in filtered])),
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 
 @app.route("/api/health")
 def health():
-    return jsonify({"status": "ok", "version": "4.1.0"})
+    return jsonify({"status": "ok", "version": "4.1.0",
+                    "routes": ["/", "/jra", "/nar"]})
 
 
 if __name__ == "__main__":

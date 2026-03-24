@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#1a0d00">
+  <title>HARUTO NAR v4.1.0</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #1a0d00;
+      --surface:  #2a1800;
+      --surface2: #3a2200;
+      --border:   #5a3a10;
+      --accent:   #d4820a;
+      --accent2:  #f0a830;
+      --red:      #ff5533;
+      --blue:     #6699ff;
+      --green:    #55cc77;
+      --gray:     #776655;
+      --text:     #f0e0c0;
+      --text2:    #c0a880;
+    }
+    html, body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Hiragino Kaku Gothic ProN', 'Noto Sans JP', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+    /* ─── ヘッダー ─── */
+    header {
+      background: #110800;
+      border-bottom: 2px solid var(--accent);
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0; z-index: 100;
+    }
+    header h1 { font-size: 18px; font-weight: 700; color: var(--accent2); letter-spacing: 2px; }
+    header .sub { font-size: 11px; color: var(--gray); }
+    .home-link {
+      font-size: 12px; color: var(--text2);
+      text-decoration: none; border: 1px solid var(--border);
+      padding: 4px 10px; border-radius: 4px;
+    }
+    /* ─── コントロール ─── */
+    .controls {
+      padding: 12px 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .controls input[type="date"],
+    .controls select {
+      background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 10px; font-size: 14px; flex: 1; min-width: 120px;
+    }
+    .btn {
+      background: var(--accent); color: #000;
+      border: none; border-radius: 6px;
+      padding: 9px 18px; font-size: 14px; font-weight: 700;
+      cursor: pointer; white-space: nowrap;
+    }
+    .btn:active { opacity: 0.8; }
+    .btn-outline {
+      background: transparent; color: var(--accent2);
+      border: 1px solid var(--accent);
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    /* ─── ステータスバー ─── */
+    #status-bar {
+      padding: 6px 16px; font-size: 12px; color: var(--text2);
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      min-height: 28px;
+    }
+    #status-bar.loading { color: var(--accent2); }
+    #status-bar.error   { color: var(--red); }
+    #status-bar.ok      { color: var(--green); }
+    /* ─── レース選択リスト ─── */
+    #venue-list { padding: 12px 16px; }
+    .venue-block { margin-bottom: 16px; }
+    .venue-name {
+      font-size: 13px; font-weight: 700; color: var(--accent2);
+      margin-bottom: 6px; padding: 4px 8px;
+      background: var(--surface); border-radius: 4px;
+      border-left: 3px solid var(--accent);
+    }
+    .race-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+    .race-btn {
+      background: var(--surface2); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 14px; font-size: 13px; cursor: pointer;
+      min-width: 52px; text-align: center;
+    }
+    .race-btn:active { background: var(--accent); color: #000; }
+    .race-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+    /* ─── 予想テーブル ─── */
+    #result-section { padding: 0 0 80px; }
+    .race-header {
+      padding: 10px 16px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .race-header h2 { font-size: 15px; font-weight: 700; color: var(--accent2); }
+    .race-header .race-meta { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table {
+      width: 100%; border-collapse: collapse;
+      font-size: 12px; min-width: 500px;
+    }
+    thead th {
+      background: var(--surface2); color: var(--text2);
+      padding: 7px 6px; text-align: center;
+      border-bottom: 2px solid var(--accent);
+      font-weight: 600; white-space: nowrap; font-size: 11px;
+    }
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: #2e1a00; }
+    tbody td { padding: 8px 6px; text-align: center; white-space: nowrap; }
+    /* 予想印 */
+    .mark-honnmei { color: #ff5533; font-weight: 900; font-size: 16px; }
+    .mark-taiko   { color: #ff9944; font-weight: 800; font-size: 15px; }
+    .mark-tanki   { color: #ffcc55; font-weight: 700; font-size: 14px; }
+    .mark-renpuku { color: #88aaff; font-weight: 600; font-size: 13px; }
+    .mark-kesi    { color: var(--gray); font-size: 12px; }
+    /* 人気 */
+    .ninki-1 { color: #ff5533; font-weight: 700; }
+    .ninki-2 { color: #ff9944; font-weight: 700; }
+    .ninki-3 { color: #ffcc55; font-weight: 600; }
+    /* 日刊コンビ */
+    .compi-red   { color: #ff5533; font-weight: 700; }
+    .compi-black { color: var(--text); font-weight: 600; }
+    .compi-gray  { color: var(--gray); }
+    /* スコア */
+    .score-top { color: var(--accent2); font-weight: 900; font-size: 14px; }
+    .score-2   { color: #aaa; font-weight: 700; }
+    .score-3   { color: #666; }
+    /* 消し */
+    .elim-1 td { color: #886644; }
+    .elim-2 td { color: #554433; text-decoration: line-through; }
+    /* ─── ダート装飾 ─── */
+    .dirt-badge {
+      display: inline-block;
+      background: var(--accent);
+      color: #000;
+      font-size: 10px; font-weight: 700;
+      padding: 2px 6px; border-radius: 3px;
+      margin-left: 6px;
+    }
+    /* ─── FAB ─── */
+    #fab {
+      position: fixed; bottom: 24px; right: 20px;
+      background: var(--accent); color: #000;
+      border: none; border-radius: 28px;
+      padding: 14px 24px; font-size: 15px; font-weight: 700;
+      cursor: pointer; box-shadow: 0 4px 20px rgba(212,130,10,0.5);
+      display: none; z-index: 200;
+    }
+    #fab.visible { display: block; }
+    /* ─── スピナー ─── */
+    .spinner {
+      display: inline-block; width: 14px; height: 14px;
+      border: 2px solid var(--accent); border-top-color: transparent;
+      border-radius: 50%; animation: spin 0.7s linear infinite;
+      vertical-align: middle; margin-right: 6px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @media (max-width: 380px) {
+      header h1 { font-size: 15px; }
+      .btn { padding: 8px 12px; font-size: 13px; }
+      table { font-size: 11px; min-width: 420px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>HARUTO NAR <span class="dirt-badge">ダート</span></h1>
+    <div class="sub">地方競馬予想 v4.1.0</div>
+  </div>
+  <a class="home-link" href="/">← TOP</a>
+</header>
+
+<div class="controls">
+  <input type="date" id="date-picker" />
+  <button class="btn" id="btn-load">レース取得</button>
+  <button class="btn btn-outline" id="btn-today">本日</button>
+</div>
+
+<div id="status-bar">日付を選択してレースを取得してください</div>
+<div id="venue-list"></div>
+<div id="result-section"></div>
+<button id="fab">予想する</button>
+
+<script>
+  const state = { selectedRaceUrl: null, selectedRaceLabel: "" };
+  const datePicker = document.getElementById("date-picker");
+  const btnLoad    = document.getElementById("btn-load");
+  const btnToday   = document.getElementById("btn-today");
+  const statusBar  = document.getElementById("status-bar");
+  const venueList  = document.getElementById("venue-list");
+  const resultSec  = document.getElementById("result-section");
+  const fab        = document.getElementById("fab");
+
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
+  datePicker.value = todayStr();
+
+  function setStatus(msg, type = "") {
+    statusBar.innerHTML = msg;
+    statusBar.className = type;
+  }
+
+  async function loadRaces() {
+    const d = datePicker.value.replace(/-/g, "");
+    setStatus('<span class="spinner"></span>レース一覧取得中…', "loading");
+    btnLoad.disabled = true;
+    venueList.innerHTML = "";
+    resultSec.innerHTML = "";
+    fab.classList.remove("visible");
+    state.selectedRaceUrl = null;
+
+    try {
+      const res  = await fetch(`/api/nar/races?date=${d}`);
+      const data = await res.json();
+      if (!data.venues || data.venues.length === 0) {
+        setStatus(data.message || "この日の地方競馬レースが見つかりません", "error");
+        return;
+      }
+      renderVenues(data.venues);
+      setStatus(`${data.venues.length}会場・${countRaces(data.venues)}レース取得完了`, "ok");
+    } catch(e) {
+      setStatus("通信エラー: " + e.message, "error");
+    } finally {
+      btnLoad.disabled = false;
+    }
+  }
+
+  function countRaces(venues) {
+    return venues.reduce((s, v) => s + v.races.length, 0);
+  }
+
+  function renderVenues(venues) {
+    venueList.innerHTML = "";
+    venues.forEach(venue => {
+      const block = document.createElement("div");
+      block.className = "venue-block";
+      const title = document.createElement("div");
+      title.className = "venue-name";
+      title.textContent = `🏟 ${venue.name}`;
+      block.appendChild(title);
+      const btns = document.createElement("div");
+      btns.className = "race-btns";
+      venue.races.forEach(race => {
+        const btn = document.createElement("button");
+        btn.className = "race-btn";
+        btn.textContent = `${race.race_no}R`;
+        btn.onclick = () => selectRace(btn, race.url, `${venue.name} ${race.race_no}R`);
+        btns.appendChild(btn);
+      });
+      block.appendChild(btns);
+      venueList.appendChild(block);
+    });
+  }
+
+  function selectRace(btnEl, url, label) {
+    document.querySelectorAll(".race-btn").forEach(b => b.classList.remove("active"));
+    btnEl.classList.add("active");
+    state.selectedRaceUrl = url;
+    state.selectedRaceLabel = label;
+    fab.classList.add("visible");
+    setStatus(`${label} を選択中 → 「予想する」をタップ`);
+  }
+
+  async function runPredict() {
+    if (!state.selectedRaceUrl) return;
+    fab.textContent = "予想中…";
+    fab.disabled = true;
+    resultSec.innerHTML = "";
+    setStatus(`<span class="spinner"></span>${state.selectedRaceLabel} 予想中…`, "loading");
+
+    try {
+      const res  = await fetch(`/api/nar/predict?url=${encodeURIComponent(state.selectedRaceUrl)}`);
+      const data = await res.json();
+      if (data.error) { setStatus("エラー: " + data.error, "error"); return; }
+      renderResult(data);
+      setStatus(`${state.selectedRaceLabel} 予想完了`, "ok");
+      resultSec.scrollIntoView({ behavior: "smooth" });
+    } catch(e) {
+      setStatus("予想エラー: " + e.message, "error");
+    } finally {
+      fab.textContent = "予想する";
+      fab.disabled = false;
+    }
+  }
+
+  function renderResult(data) {
+    const { race, horses } = data;
+    const html = `
+      <div class="race-header">
+        <h2>${state.selectedRaceLabel}</h2>
+        <div class="race-meta">
+          ダート${race.distance || ""}m &nbsp;|&nbsp;
+          馬場: ${race.condition || "-"} &nbsp;|&nbsp;
+          ${race.grade || ""}
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>印</th>
+              <th>馬番</th>
+              <th>馬名</th>
+              <th>人気</th>
+              <th>日刊</th>
+              <th>斤量</th>
+              <th>騎手</th>
+              <th>スコア</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${horses.map((h, i) => renderRow(h, i)).join("")}
+          </tbody>
+        </table>
+      </div>
+    `;
+    resultSec.innerHTML = html;
+  }
+
+  function markClass(m) {
+    if (m === "◎") return "mark-honnmei";
+    if (m === "○") return "mark-taiko";
+    if (m === "▲") return "mark-tanki";
+    if (m === "△") return "mark-renpuku";
+    return "mark-kesi";
+  }
+  function ninkiClass(n) {
+    if (n === 1) return "ninki-1";
+    if (n === 2) return "ninki-2";
+    if (n === 3) return "ninki-3";
+    return "";
+  }
+  function compiClass(v) {
+    if (v >= 90) return "compi-red";
+    if (v >= 70) return "compi-black";
+    return "compi-gray";
+  }
+  function scoreClass(i) {
+    if (i === 0) return "score-top";
+    if (i === 1) return "score-2";
+    return "score-3";
+  }
+
+  function renderRow(h, rank) {
+    const elimClass = h.elim_level >= 2 ? "elim-2" : h.elim_level === 1 ? "elim-1" : "";
+    const compi = h.compi_idx || 0;
+    return `
+      <tr class="${elimClass}">
+        <td class="${markClass(h.mark)}">${h.mark || ""}</td>
+        <td>${h.uma_no || ""}</td>
+        <td style="text-align:left;max-width:80px;overflow:hidden;text-overflow:ellipsis">${h.name || ""}</td>
+        <td class="${ninkiClass(h.ninki)}">${h.ninki || "-"}</td>
+        <td class="${compiClass(compi)}">${compi > 0 ? compi : "-"}</td>
+        <td>${h.kinryo || "-"}</td>
+        <td style="text-align:left;max-width:70px;overflow:hidden;text-overflow:ellipsis">${h.jockey || "-"}</td>
+        <td class="${scoreClass(rank)}">${h.total_score !== undefined ? h.total_score.toFixed(1) : "-"}</td>
+      </tr>
+    `;
+  }
+
+  btnLoad.onclick  = loadRaces;
+  btnToday.onclick = () => { datePicker.value = todayStr(); loadRaces(); };
+  fab.onclick      = runPredict;
+  datePicker.onchange = () => {
+    venueList.innerHTML = "";
+    resultSec.innerHTML = "";
+    fab.classList.remove("visible");
+    setStatus("「レース取得」を押してください");
+  };
+</script>
+</body>
+</html>
