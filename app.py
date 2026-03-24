@@ -216,30 +216,25 @@ def get_race_list(target_date: date | None = None) -> dict:
     if target_date is None:
         target_date = date.today()
     ds = target_date.strftime("%Y%m%d")
-    url = f"{BASE}/race/list/{ds}/"
+    # 正しいURL: /db/race/?kaisai_date=YYYYMMDD
+    url = f"{BASE}/db/race/?kaisai_date={ds}"
     soup = _get(url)
     venues: dict[str, dict] = {}
 
     if soup:
         for a in soup.find_all("a", href=True):
             href = a["href"]
-            if "/race/" not in href:
+            if "/db/race/" not in href:
                 continue
-
-            # keibalab URL形式A: /race/{YYYY:4}{MM:2}{DD:2}{venue:2}{race:2}/  (12桁)
-            m = re.search(r"/race/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/", href)
-            if m:
-                venue_code = m.group(4)
-                race_no    = int(m.group(5))
-            else:
-                # 形式B: /race/{venue:2}{YYYY:4}{MM:2}{DD:2}{race:2}/  (12桁)
-                m = re.search(r"/race/(\d{2})(\d{4})(\d{2})(\d{2})(\d{2})/", href)
-                if m:
-                    venue_code = m.group(1)
-                    race_no    = int(m.group(5))
-                else:
-                    continue
-
+            # レースURL形式: /db/race/YYYYMMDDVVNN/ (正確に12桁)
+            m = re.search(r"/db/race/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/$", href)
+            if not m:
+                # 末尾スラッシュなしも試す
+                m = re.search(r"/db/race/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(?:/|$)", href)
+            if not m:
+                continue
+            year, month, day, venue_code, race_no_s = m.groups()
+            race_no = int(race_no_s)
             if venue_code not in VENUE_MAP or race_no <= 0:
                 continue
             venue_name = VENUE_MAP[venue_code]
@@ -267,7 +262,7 @@ def get_race_list(target_date: date | None = None) -> dict:
 # ──────────────────────────────────────────────
 
 def get_race_detail(race_url: str) -> dict | None:
-    """レース詳細（出馬表）取得"""
+    """レース詳細（出馬表 or 結果表）取得"""
     soup = _get(race_url)
     if not soup:
         return None
@@ -275,9 +270,9 @@ def get_race_detail(race_url: str) -> dict | None:
     race = {"url": race_url, "horses": [], "distance": 1600,
             "course_type": "芝", "condition": "良", "grade": ""}
 
-    # レース情報
-    for sel in [".race-info", ".raceinfo", "h1.race-name", ".race_header",
-                ".mainrace_data", ".race_data01", ".RaceData01"]:
+    # ── レース情報 ──
+    for sel in [".raceaboutbox", ".racedatawrap", ".race-info", ".raceinfo",
+                ".mainrace_data", ".RaceData01"]:
         info_el = soup.select_one(sel)
         if info_el:
             info_text = info_el.get_text(" ", strip=True)
@@ -296,49 +291,83 @@ def get_race_detail(race_url: str) -> dict | None:
                     break
             break
 
-    # 出馬表（複数セレクタを試みる）
-    row_selectors = [
-        "table.shutuba tr",
-        "table.race-table tr",
-        "tr.horse-row",
-        ".HorseList",
-        "table tr",
-    ]
-    for sel in row_selectors:
-        rows = soup.select(sel)
-        for row in rows:
+    # ── テーブルを探してヘッダーで列構造を判定 ──
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if len(rows) < 2:
+            continue
+
+        # ヘッダー行の取得
+        header_cells = rows[0].find_all(["th","td"])
+        headers = [c.get_text(" ", strip=True) for c in header_cells]
+
+        # 列インデックスの決定
+        # keibalab resulttable: 着順|枠番|馬番|馬名|性齢|斤量|騎手|人気|...
+        # keibalab shutuba:     枠番|馬番|馬名|性齢|斤量|騎手|...  または 馬番|馬名|...
+        if any("着" in h for h in headers[:2]):
+            # 結果テーブル
+            i_uma, i_name, i_sex, i_kin, i_joc, i_pop = 2, 3, 4, 5, 6, 7
+        elif any("枠" in h for h in headers[:2]):
+            # 枠番が先頭にある出馬表
+            i_uma, i_name, i_sex, i_kin, i_joc, i_pop = 1, 2, 3, 4, 5, 7
+        else:
+            # 馬番が先頭の出馬表
+            i_uma, i_name, i_sex, i_kin, i_joc, i_pop = 0, 1, 2, 3, 4, 6
+
+        for row in rows[1:]:
             cells = row.find_all(["td","th"])
-            if len(cells) < 5:
+            if len(cells) < max(i_uma, i_name, i_joc) + 1:
                 continue
             texts = [c.get_text(" ", strip=True) for c in cells]
-            uma_no = _si(texts[0])
+
+            uma_no = _si(texts[i_uma]) if i_uma < len(texts) else 0
             if not (1 <= uma_no <= 18):
                 continue
+            name = texts[i_name] if i_name < len(texts) else ""
+            if not name or len(name) < 2:
+                continue
 
-            horse = {
-                "uma_no":      uma_no,
-                "name":        texts[3] if len(texts) > 3 else "?",
-                "sex":         texts[4][:1] if len(texts) > 4 else "牡",
-                "kinryo":      _sf(texts[5]) if len(texts) > 5 else 57.0,
-                "jockey":      texts[6] if len(texts) > 6 else "",
-                "keigen":      "",
-                "odds":        _sf(texts[-2]) if len(texts) > 8 else 10.0,
-                "ninki":       _si(texts[-1]) if len(texts) > 8 else 0,
-                "kyakushitsu": "",
-                "omega_idx":   50,
-                "compi_idx":   0,
-                "sire_name":   "",
-                "alpha":       "",
-            }
+            sex_raw = texts[i_sex] if i_sex < len(texts) else "牡"
+            sex = sex_raw[:1] if sex_raw else "牡"
+
+            kinryo = _sf(texts[i_kin]) if i_kin < len(texts) else 57.0
+            if not (49 <= kinryo <= 62):
+                kinryo = 57.0
+
+            jockey = texts[i_joc] if i_joc < len(texts) else ""
+            ninki  = _si(texts[i_pop]) if i_pop < len(texts) else 0
+
+            # オッズ（表中の小数値を探す）
+            odds = 10.0
+            for t in reversed(texts):
+                v = _sf(t)
+                if 1.0 <= v <= 999.9 and "." in t:
+                    odds = v
+                    break
 
             # Ω指数
+            omega = 50
             for t in texts:
                 m = re.search(r"Ω[:\s]*(\d+)", t)
                 if m:
-                    horse["omega_idx"] = int(m.group(1))
+                    omega = int(m.group(1))
                     break
 
-            race["horses"].append(horse)
+            race["horses"].append({
+                "uma_no":      uma_no,
+                "name":        name,
+                "sex":         sex,
+                "kinryo":      kinryo,
+                "jockey":      jockey,
+                "keigen":      "",
+                "odds":        odds,
+                "ninki":       ninki,
+                "kyakushitsu": "",
+                "omega_idx":   omega,
+                "compi_idx":   0,
+                "sire_name":   "",
+                "alpha":       "",
+            })
 
         if race["horses"]:
             break
@@ -372,15 +401,16 @@ def api_races():
 def api_debug():
     """スクレイパーデバッグ（生HTMLの一部を返す）"""
     ds = request.args.get("date", date.today().strftime("%Y%m%d"))
-    url = f"{BASE}/race/list/{ds}/"
+    url = f"{BASE}/db/race/?kaisai_date={ds}"
     try:
         r = requests.get(url, headers=HEADERS, timeout=15)
-        links = re.findall(r'href="(/race/[^"]+)"', r.text)[:20]
+        links = re.findall(r'href="(/db/race/\d{12}/?)"', r.text)
+        unique = list(dict.fromkeys(links))[:30]
         return jsonify({
             "url": url,
             "status": r.status_code,
-            "race_links_found": links,
-            "html_snippet": r.text[:800],
+            "race_links_found": unique,
+            "count": len(unique),
         })
     except Exception as e:
         return jsonify({"error": str(e)})
