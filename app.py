@@ -176,9 +176,10 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/122.0.0.0 Safari/537.36"
+        "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "ja-JP,ja;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 BASE = "https://www.keibalab.jp"
 
@@ -206,6 +207,10 @@ def _si(s, d=0):
     try: return int(re.sub(r"[^\d]","",str(s)) or str(d))
     except: return d
 
+# ──────────────────────────────────────────────
+# レース一覧取得 (keibalab.jp)
+# ──────────────────────────────────────────────
+
 def get_race_list(target_date: date | None = None) -> dict:
     """当日のレース一覧取得"""
     if target_date is None:
@@ -213,29 +218,53 @@ def get_race_list(target_date: date | None = None) -> dict:
     ds = target_date.strftime("%Y%m%d")
     url = f"{BASE}/race/list/{ds}/"
     soup = _get(url)
-    venues = []
+    venues: dict[str, dict] = {}
+
     if soup:
-        for a in soup.select("a[href*='/race/']"):
-            href = a.get("href","")
-            m = re.search(r"/race/(\d{2})(\d{4})(\d{2})(\d{2})/", href)
-            if not m: continue
-            venue_code = m.group(1)
-            race_no    = _si(m.group(4))
-            venue_name = VENUE_MAP.get(venue_code, venue_code)
-            # 既存会場に追加
-            found = next((v for v in venues if v["code"]==venue_code), None)
-            if not found:
-                found = {"code": venue_code, "name": venue_name, "races": []}
-                venues.append(found)
-            if race_no not in [r["race_no"] for r in found["races"]]:
-                found["races"].append({
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if "/race/" not in href:
+                continue
+
+            # keibalab URL形式A: /race/{YYYY:4}{MM:2}{DD:2}{venue:2}{race:2}/  (12桁)
+            m = re.search(r"/race/(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})/", href)
+            if m:
+                venue_code = m.group(4)
+                race_no    = int(m.group(5))
+            else:
+                # 形式B: /race/{venue:2}{YYYY:4}{MM:2}{DD:2}{race:2}/  (12桁)
+                m = re.search(r"/race/(\d{2})(\d{4})(\d{2})(\d{2})(\d{2})/", href)
+                if m:
+                    venue_code = m.group(1)
+                    race_no    = int(m.group(5))
+                else:
+                    continue
+
+            if venue_code not in VENUE_MAP or race_no <= 0:
+                continue
+            venue_name = VENUE_MAP[venue_code]
+            full_url = (BASE + href) if href.startswith("/") else href
+
+            if venue_code not in venues:
+                venues[venue_code] = {"code": venue_code, "name": venue_name, "races": []}
+            existing = [r["race_no"] for r in venues[venue_code]["races"]]
+            if race_no not in existing:
+                venues[venue_code]["races"].append({
                     "race_no": race_no,
                     "href":    href,
-                    "url":     BASE + href,
+                    "url":     full_url,
                 })
-        for v in venues:
-            v["races"].sort(key=lambda r: r["race_no"])
-    return {"date": ds, "venues": venues}
+
+    result = list(venues.values())
+    for v in result:
+        v["races"].sort(key=lambda r: r["race_no"])
+    print(f"[keibalab] {ds}: {len(result)}会場")
+    return {"date": ds, "venues": result}
+
+
+# ──────────────────────────────────────────────
+# レース詳細（出馬表）取得
+# ──────────────────────────────────────────────
 
 def get_race_detail(race_url: str) -> dict | None:
     """レース詳細（出馬表）取得"""
@@ -247,57 +276,72 @@ def get_race_detail(race_url: str) -> dict | None:
             "course_type": "芝", "condition": "良", "grade": ""}
 
     # レース情報
-    info_el = soup.select_one(".race-info, .raceinfo, h1.race-name, .race_header")
-    if info_el:
-        info_text = info_el.get_text(" ", strip=True)
-        m_dist = re.search(r"(\d{3,4})m", info_text)
-        if m_dist:
-            race["distance"] = int(m_dist.group(1))
-        if "ダ" in info_text or "ダート" in info_text:
-            race["course_type"] = "ダ"
-        for g in ["GI","GII","GIII"]:
-            if g in info_text:
-                race["grade"] = g
-                break
-        for c in ["良","稍重","重","不良"]:
-            if c in info_text:
-                race["condition"] = c
-                break
+    for sel in [".race-info", ".raceinfo", "h1.race-name", ".race_header",
+                ".mainrace_data", ".race_data01", ".RaceData01"]:
+        info_el = soup.select_one(sel)
+        if info_el:
+            info_text = info_el.get_text(" ", strip=True)
+            m_dist = re.search(r"(\d{3,4})m", info_text)
+            if m_dist:
+                race["distance"] = int(m_dist.group(1))
+            if "ダ" in info_text or "ダート" in info_text:
+                race["course_type"] = "ダ"
+            for g in ["GI","GII","GIII"]:
+                if g in info_text:
+                    race["grade"] = g
+                    break
+            for c in ["良","稍重","重","不良"]:
+                if c in info_text:
+                    race["condition"] = c
+                    break
+            break
 
-    # 出馬表
-    for row in soup.select("table.shutuba tr, table.race-table tr, tr.horse-row"):
-        cells = row.find_all(["td","th"])
-        if len(cells) < 5:
-            continue
-        texts = [c.get_text(" ",strip=True) for c in cells]
-        uma_no = _si(texts[0])
-        if uma_no == 0:
-            continue
+    # 出馬表（複数セレクタを試みる）
+    row_selectors = [
+        "table.shutuba tr",
+        "table.race-table tr",
+        "tr.horse-row",
+        ".HorseList",
+        "table tr",
+    ]
+    for sel in row_selectors:
+        rows = soup.select(sel)
+        for row in rows:
+            cells = row.find_all(["td","th"])
+            if len(cells) < 5:
+                continue
+            texts = [c.get_text(" ", strip=True) for c in cells]
+            uma_no = _si(texts[0])
+            if not (1 <= uma_no <= 18):
+                continue
 
-        horse = {
-            "uma_no":      uma_no,
-            "name":        texts[3] if len(texts) > 3 else "?",
-            "sex":         texts[4][:1] if len(texts) > 4 else "牡",
-            "kinryo":      _sf(texts[5]) if len(texts) > 5 else 57.0,
-            "jockey":      texts[6] if len(texts) > 6 else "",
-            "keigen":      "",
-            "odds":        _sf(texts[-2]) if len(texts) > 8 else 10.0,
-            "ninki":       _si(texts[-1]) if len(texts) > 8 else 0,
-            "kyakushitsu": "",
-            "omega_idx":   0,
-            "compi_idx":   0,
-            "sire_name":   "",
-            "alpha":       "",
-        }
+            horse = {
+                "uma_no":      uma_no,
+                "name":        texts[3] if len(texts) > 3 else "?",
+                "sex":         texts[4][:1] if len(texts) > 4 else "牡",
+                "kinryo":      _sf(texts[5]) if len(texts) > 5 else 57.0,
+                "jockey":      texts[6] if len(texts) > 6 else "",
+                "keigen":      "",
+                "odds":        _sf(texts[-2]) if len(texts) > 8 else 10.0,
+                "ninki":       _si(texts[-1]) if len(texts) > 8 else 0,
+                "kyakushitsu": "",
+                "omega_idx":   50,
+                "compi_idx":   0,
+                "sire_name":   "",
+                "alpha":       "",
+            }
 
-        # Ω指数（keibalab独自列）
-        for t in texts:
-            m = re.search(r"Ω[:\s]*(\d+)", t)
-            if m:
-                horse["omega_idx"] = int(m.group(1))
-                break
+            # Ω指数
+            for t in texts:
+                m = re.search(r"Ω[:\s]*(\d+)", t)
+                if m:
+                    horse["omega_idx"] = int(m.group(1))
+                    break
 
-        race["horses"].append(horse)
+            race["horses"].append(horse)
+
+        if race["horses"]:
+            break
 
     return race if race["horses"] else None
 
@@ -319,7 +363,27 @@ def api_races():
     except ValueError:
         td = date.today()
     data = get_race_list(td)
+    if not data.get("venues"):
+        data["message"] = "本日の開催情報が取得できませんでした。JRAは土日祝のみ開催です。"
     return jsonify(data)
+
+
+@app.route("/api/debug")
+def api_debug():
+    """スクレイパーデバッグ（生HTMLの一部を返す）"""
+    ds = request.args.get("date", date.today().strftime("%Y%m%d"))
+    url = f"{BASE}/race/list/{ds}/"
+    try:
+        r = requests.get(url, headers=HEADERS, timeout=15)
+        links = re.findall(r'href="(/race/[^"]+)"', r.text)[:20]
+        return jsonify({
+            "url": url,
+            "status": r.status_code,
+            "race_links_found": links,
+            "html_snippet": r.text[:800],
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 @app.route("/api/predict")
 def api_predict():

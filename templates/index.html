@@ -336,7 +336,8 @@
       const data = await res.json();
 
       if (!data.venues || data.venues.length === 0) {
-        setStatus("本日のレースデータが見つかりません", "error");
+        const msg = data.message || "この日のレースデータが見つかりません（JRAは土日祝のみ開催）";
+        setStatus(msg, "error");
         return;
       }
 
