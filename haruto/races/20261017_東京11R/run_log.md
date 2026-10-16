@@ -30,3 +30,31 @@
 
 ## 担当の起動記録（14担当）
 （下に追記）
+| 担当 | エージェント | 起動方法 | 出力ファイル | 状態 |
+|---|---|---|---|---|
+| Chief Orchestrator | メインセッション | — | internal_draft.md / internal.md / note.md | 統合①②・Red-Team反映 |
+| Data Intelligence | haruto-data-intelligence | サブエージェント起動（第1波） | agents/haruto-data-intelligence.md | PARTIAL（実読: 1–58,95–125,166–172,497–522,543–567,649–667,787–824,1027–1050,1072–1136） |
+| RT6 & Rotation | haruto-rt6-rotation | サブエージェント起動（第2波＋PHASE14で再開） | agents/haruto-rt6-rotation.md | DONE（実読: 1–234,337–351,999–1136） |
+| Pace / Simulation | haruto-pace-simulation | サブエージェント起動（第2波） | agents/haruto-pace-simulation.md, sim/ | DONE・EXPERIMENTAL（実読: 1–254,696–855,1027–1136） |
+| Lap / Speed | haruto-lap-speed | サブエージェント起動（第2波） | agents/haruto-lap-speed.md | PARTIAL（実読: 1–240,337–350,725–854,999–1136） |
+| Track Bias | haruto-track-bias | サブエージェント起動（第2波） | agents/haruto-track-bias.md | PARTIAL（実読: 1–239,311–400,999–1136） |
+| Bloodline | haruto-bloodline | サブエージェント起動（第2波） | agents/haruto-bloodline.md | PARTIAL（実読: 1–233,999–1136） |
+| Condition / Training | haruto-condition-training | サブエージェント起動（第2波） | agents/haruto-condition-training.md | PARTIAL（実読: 1–240,337–351,787–856,999–1136） |
+| Jockey | haruto-jockey | サブエージェント起動（第2波） | agents/haruto-jockey.md | PARTIAL（実読: 1–235,999–1136） |
+| Market / Odds | haruto-market-odds | サブエージェント起動（第2波） | agents/haruto-market-odds.md, ev/market_implied.csv | PARTIAL（実読: 1–60,95–275,337–350,649–681,855–908,1027–1136） |
+| EV / Probability | haruto-ev-probability | サブエージェント起動（第3波） | agents/haruto-ev-probability.md, ev/ | PARTIAL・EXPERIMENTAL（実読: 1–275,581–648,855–1136） |
+| Risk Supervisor | haruto-risk-supervisor | サブエージェント起動（第3波＋PHASE20で再開） | agents/haruto-risk-supervisor.md | DONE（実読: 1–57,95–111,166–275,311–350,633–648,855–1136） |
+| Red-Team | haruto-red-team | サブエージェント起動（第4波） | agents/haruto-red-team.md | DONE（実読: 1–111,166–233,909–1136） |
+| Protocol Compliance Supervisor | haruto-protocol-compliance | サブエージェント起動（第4波・最終） | compliance.md | （監査後に追記） |
+
+※ 13担当すべてをサブエージェントとして実際に起動した（第2波8担当は同時並列、他は順次）。Chiefはメインセッション。マスター全文通読はChiefのみで、各担当は担当箇所の部分読み。
+
+## 矛盾の調停ログ
+| 論点 | 担当A | 担当B | Chiefの判断と理由 |
+|---|---|---|---|
+| ④の評価 | Lap: 能力1位 | RT6(02): 危険人気候補 | RT6(14)が取り下げ。能力層を優先し上位維持 |
+| ◎の選定 | 統合①: ⑤（能力両系統一致） | Red-Team: ⑤補正98の二重計上、④の減点根拠は実績と矛盾 | Red-Team採用（V19能力最優先、Lap順位とゼロベースが④1位）→ ◎④○⑤ |
+| ⑭の経歴 | 依頼文: 古馬初対戦・20週 | RT6/Risk: しらさぎSで古馬戦経験、16.9週 | 訂正を採用 |
+| ⑭の追切 | Condition: A | Red-Team: 最終坂路は型の変化で⑦⑫と同基準ならB | B相当として扱う（△は維持） |
+| ⑩のスロー耐性 | RT6: 上がり1位でスロー〜平均は相殺 | Pace: 雲雀S（スロー）7着 | RT6(14)のラップ照合を採用: 前半4F 47.9以上の極端なスローのみ減点 |
+| 参考馬連3点 | EV: 条件付き候補 | Red-Team: 見かけの正EV、研究記録のみへ | Red-Team採用（価格条件を満たしても較正の問題は消えない）。note非掲載 |
