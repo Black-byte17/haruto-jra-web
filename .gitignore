@@ -6,3 +6,7 @@ venv/
 .venv/
 *.log
 jvdata/
+
+# HARUTO: 全場分のOikiri原本は大容量のためコミットしない（レース別抽出のみ保存）
+haruto/races/*/input/*oikiri.csv
+haruto/races/*/input/*oikiri.utf8.csv
